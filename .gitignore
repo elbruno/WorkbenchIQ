@@ -374,3 +374,10 @@ content-understanding-samples/
 
 # Include frontend lib folder (not Python's lib/)
 !frontend/src/lib/
+
+# ============================================================================
+# .NET Aspire
+# ============================================================================
+aspire/**/bin/
+aspire/**/obj/
+*.user

@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="WorkbenchIQ.AppHost/WorkbenchIQ.AppHost.csproj" />
+  <Project Path="WorkbenchIQ.ServiceDefaults/WorkbenchIQ.ServiceDefaults.csproj" />
+</Solution>
