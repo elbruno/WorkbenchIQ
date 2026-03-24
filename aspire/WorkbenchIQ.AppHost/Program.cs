@@ -1,4 +1,58 @@
+using Azure.Identity;
+using Azure.Security.KeyVault.Secrets;
+using Azure.Extensions.AspNetCore.Configuration.Secrets;
+using Microsoft.Extensions.Configuration;
+
 var builder = DistributedApplication.CreateBuilder(args);
+
+// =============================================================================
+// Azure Key Vault Configuration (Production)
+// =============================================================================
+// When deployed to Azure, load secrets from Key Vault using Managed Identity.
+// Key Vault URI should be provided via AZURE_KEY_VAULT_URI environment variable.
+var keyVaultUri = Environment.GetEnvironmentVariable("AZURE_KEY_VAULT_URI");
+if (!string.IsNullOrEmpty(keyVaultUri))
+{
+    var secretClient = new SecretClient(new Uri(keyVaultUri), new DefaultAzureCredential());
+    
+    // Create a ConfigurationBuilder to add Key Vault secrets
+    var configBuilder = new ConfigurationBuilder();
+    foreach (var source in builder.Configuration.Sources)
+    {
+        configBuilder.Sources.Add(source);
+    }
+    
+    // Add Key Vault secrets with custom prefix mapper
+    // Key Vault secrets use '--' (e.g., 'AzureOpenAI--Endpoint')
+    // which maps to 'Parameters:AzureOpenAI:Endpoint' in configuration
+    configBuilder.AddAzureKeyVault(secretClient, new PrefixKeyVaultSecretManager("Parameters"));
+    
+    // Build and replace the configuration
+    var config = configBuilder.Build();
+    foreach (var kvp in config.AsEnumerable())
+    {
+        if (kvp.Value != null)
+        {
+            builder.Configuration[kvp.Key] = kvp.Value;
+        }
+    }
+    
+    Console.WriteLine($"✅ Azure Key Vault configured: {keyVaultUri}");
+}
+else
+{
+    var environment = builder.Environment.EnvironmentName;
+    if (environment == "Development")
+    {
+        Console.WriteLine("ℹ️  Running in development mode. Using User Secrets for configuration.");
+        Console.WriteLine("   Run './setup-secrets.ps1' to configure your local secrets.");
+    }
+    else
+    {
+        Console.WriteLine("⚠️  AZURE_KEY_VAULT_URI not set. Secrets will be loaded from configuration only.");
+    }
+}
+// Note: User Secrets are automatically loaded in development by default
 
 // =============================================================================
 // Deployment Mode Detection
@@ -31,6 +85,51 @@ else
     // LOCAL DEVELOPMENT MODE: Process-based orchestration
     // =============================================================================
     
+    // =============================================================================
+    // Parameters — Aspire Dashboard will prompt for missing values on first run
+    // =============================================================================
+    
+    // --- Core API Authentication ---
+    var apiKey = builder.AddParameter("api-key", secret: true);
+    
+    // --- Azure Content Understanding ---
+    var cuEndpoint = builder.AddParameter("content-understanding-endpoint");
+    var cuApiKey = builder.AddParameter("content-understanding-api-key", secret: true);
+    var cuCompletionDeployment = builder.AddParameter("content-understanding-completion-deployment");
+    var cuEmbeddingDeployment = builder.AddParameter("content-understanding-embedding-deployment");
+    
+    // --- Azure OpenAI (Primary) ---
+    var openAiEndpoint = builder.AddParameter("azure-openai-endpoint");
+    var openAiApiKey = builder.AddParameter("azure-openai-api-key", secret: true);
+    var openAiDeploymentName = builder.AddParameter("azure-openai-deployment-name");
+    
+    // --- Azure OpenAI (Chat-specific for Ask IQ) ---
+    var openAiChatDeploymentName = builder.AddParameter("azure-openai-chat-deployment-name");
+    var openAiChatModelName = builder.AddParameter("azure-openai-chat-model-name");
+    var openAiChatApiVersion = builder.AddParameter("azure-openai-chat-api-version");
+    
+    // --- Azure OpenAI (Fallback) ---
+    var openAiFallbackEndpoint = builder.AddParameter("azure-openai-fallback-endpoint");
+    var openAiFallbackApiKey = builder.AddParameter("azure-openai-fallback-api-key", secret: true);
+    var openAiFallbackDeploymentName = builder.AddParameter("azure-openai-fallback-deployment-name");
+    var openAiFallbackApiVersion = builder.AddParameter("azure-openai-fallback-api-version");
+    
+    // --- Azure Storage (optional) ---
+    var storageAccountName = builder.AddParameter("azure-storage-account-name");
+    var storageAccountKey = builder.AddParameter("azure-storage-account-key", secret: true);
+    var storageContainerName = builder.AddParameter("azure-storage-container-name");
+    
+    // --- Frontend Authentication ---
+    var frontendAuthSecret = builder.AddParameter("frontend-auth-secret", secret: true);
+    var frontendAuthUser1 = builder.AddParameter("frontend-auth-user-1", secret: true);
+    var frontendAuthUser2 = builder.AddParameter("frontend-auth-user-2", secret: true);
+    var frontendAuthUser3 = builder.AddParameter("frontend-auth-user-3", secret: true);
+    var frontendAuthUser4 = builder.AddParameter("frontend-auth-user-4", secret: true);
+    var frontendAuthUser5 = builder.AddParameter("frontend-auth-user-5", secret: true);
+    
+    // --- RAG Embedding Deployment (optional) ---
+    var ragEmbeddingDeployment = builder.AddParameter("rag-embedding-deployment");
+    
     // Optional PostgreSQL Container (for local development)
     var enablePostgres = builder.Configuration["Parameters:EnablePostgres"]?.Equals("true", StringComparison.OrdinalIgnoreCase) ?? false;
     
@@ -50,27 +149,20 @@ else
         .WithExternalHttpEndpoints()
         .WithHttpHealthCheck("/health/ready")
     // Azure Content Understanding
-    .WithEnvironment("AZURE_CONTENT_UNDERSTANDING_ENDPOINT",
-        builder.Configuration["Parameters:ContentUnderstanding:Endpoint"] ?? "")
-    .WithEnvironment("AZURE_CONTENT_UNDERSTANDING_API_KEY",
-        builder.Configuration["Parameters:ContentUnderstanding:ApiKey"] ?? "")
+    .WithEnvironment("AZURE_CONTENT_UNDERSTANDING_ENDPOINT", cuEndpoint)
+    .WithEnvironment("AZURE_CONTENT_UNDERSTANDING_API_KEY", cuApiKey)
     .WithEnvironment("AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID",
         builder.Configuration["Parameters:ContentUnderstanding:AnalyzerId"] ?? "prebuilt-documentSearch")
     .WithEnvironment("AZURE_CONTENT_UNDERSTANDING_API_VERSION",
         builder.Configuration["Parameters:ContentUnderstanding:ApiVersion"] ?? "2025-11-01")
     .WithEnvironment("AZURE_CONTENT_UNDERSTANDING_USE_AZURE_AD",
         builder.Configuration["Parameters:ContentUnderstanding:UseAzureAD"] ?? "true")
-    .WithEnvironment("AZURE_CONTENT_UNDERSTANDING_COMPLETION_DEPLOYMENT",
-        builder.Configuration["Parameters:ContentUnderstanding:CompletionDeployment"] ?? "")
-    .WithEnvironment("AZURE_CONTENT_UNDERSTANDING_EMBEDDING_DEPLOYMENT",
-        builder.Configuration["Parameters:ContentUnderstanding:EmbeddingDeployment"] ?? "")
+    .WithEnvironment("AZURE_CONTENT_UNDERSTANDING_COMPLETION_DEPLOYMENT", cuCompletionDeployment)
+    .WithEnvironment("AZURE_CONTENT_UNDERSTANDING_EMBEDDING_DEPLOYMENT", cuEmbeddingDeployment)
     // Azure OpenAI (Primary)
-    .WithEnvironment("AZURE_OPENAI_ENDPOINT",
-        builder.Configuration["Parameters:AzureOpenAI:Endpoint"] ?? "")
-    .WithEnvironment("AZURE_OPENAI_API_KEY",
-        builder.Configuration["Parameters:AzureOpenAI:ApiKey"] ?? "")
-    .WithEnvironment("AZURE_OPENAI_DEPLOYMENT_NAME",
-        builder.Configuration["Parameters:AzureOpenAI:DeploymentName"] ?? "")
+    .WithEnvironment("AZURE_OPENAI_ENDPOINT", openAiEndpoint)
+    .WithEnvironment("AZURE_OPENAI_API_KEY", openAiApiKey)
+    .WithEnvironment("AZURE_OPENAI_DEPLOYMENT_NAME", openAiDeploymentName)
     .WithEnvironment("AZURE_OPENAI_API_VERSION",
         builder.Configuration["Parameters:AzureOpenAI:ApiVersion"] ?? "2024-10-21")
     .WithEnvironment("AZURE_OPENAI_MODEL_NAME",
@@ -78,32 +170,22 @@ else
     .WithEnvironment("AZURE_OPENAI_USE_AZURE_AD",
         builder.Configuration["Parameters:AzureOpenAI:UseAzureAD"] ?? "true")
     // Azure OpenAI (Chat-specific for Ask IQ)
-    .WithEnvironment("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME",
-        builder.Configuration["Parameters:AzureOpenAI:ChatDeploymentName"] ?? "")
-    .WithEnvironment("AZURE_OPENAI_CHAT_MODEL_NAME",
-        builder.Configuration["Parameters:AzureOpenAI:ChatModelName"] ?? "")
-    .WithEnvironment("AZURE_OPENAI_CHAT_API_VERSION",
-        builder.Configuration["Parameters:AzureOpenAI:ChatApiVersion"] ?? "")
+    .WithEnvironment("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", openAiChatDeploymentName)
+    .WithEnvironment("AZURE_OPENAI_CHAT_MODEL_NAME", openAiChatModelName)
+    .WithEnvironment("AZURE_OPENAI_CHAT_API_VERSION", openAiChatApiVersion)
     // Azure OpenAI (Fallback)
-    .WithEnvironment("AZURE_OPENAI_FALLBACK_ENDPOINT",
-        builder.Configuration["Parameters:AzureOpenAI:FallbackEndpoint"] ?? "")
-    .WithEnvironment("AZURE_OPENAI_FALLBACK_API_KEY",
-        builder.Configuration["Parameters:AzureOpenAI:FallbackApiKey"] ?? "")
-    .WithEnvironment("AZURE_OPENAI_FALLBACK_DEPLOYMENT_NAME",
-        builder.Configuration["Parameters:AzureOpenAI:FallbackDeploymentName"] ?? "")
-    .WithEnvironment("AZURE_OPENAI_FALLBACK_API_VERSION",
-        builder.Configuration["Parameters:AzureOpenAI:FallbackApiVersion"] ?? "")
+    .WithEnvironment("AZURE_OPENAI_FALLBACK_ENDPOINT", openAiFallbackEndpoint)
+    .WithEnvironment("AZURE_OPENAI_FALLBACK_API_KEY", openAiFallbackApiKey)
+    .WithEnvironment("AZURE_OPENAI_FALLBACK_DEPLOYMENT_NAME", openAiFallbackDeploymentName)
+    .WithEnvironment("AZURE_OPENAI_FALLBACK_API_VERSION", openAiFallbackApiVersion)
     .WithEnvironment("AZURE_OPENAI_FALLBACK_USE_AZURE_AD",
         builder.Configuration["Parameters:AzureOpenAI:FallbackUseAzureAD"] ?? "false")
     // Azure Storage
     .WithEnvironment("STORAGE_BACKEND",
         builder.Configuration["Parameters:StorageBackend"] ?? "local")
-    .WithEnvironment("AZURE_STORAGE_ACCOUNT_NAME",
-        builder.Configuration["Parameters:AzureStorage:AccountName"] ?? "")
-    .WithEnvironment("AZURE_STORAGE_ACCOUNT_KEY",
-        builder.Configuration["Parameters:AzureStorage:AccountKey"] ?? "")
-    .WithEnvironment("AZURE_STORAGE_CONTAINER_NAME",
-        builder.Configuration["Parameters:AzureStorage:ContainerName"] ?? "")
+    .WithEnvironment("AZURE_STORAGE_ACCOUNT_NAME", storageAccountName)
+    .WithEnvironment("AZURE_STORAGE_ACCOUNT_KEY", storageAccountKey)
+    .WithEnvironment("AZURE_STORAGE_CONTAINER_NAME", storageContainerName)
     .WithEnvironment("AZURE_STORAGE_TIMEOUT_SECONDS",
         builder.Configuration["Parameters:AzureStorage:TimeoutSeconds"] ?? "30")
     .WithEnvironment("AZURE_STORAGE_RETRY_TOTAL",
@@ -115,8 +197,7 @@ else
         builder.Configuration["Parameters:App:PromptsRoot"] ?? "prompts")
     .WithEnvironment("PUBLIC_FILES_BASE_URL",
         builder.Configuration["Parameters:App:PublicFilesBaseUrl"] ?? "")
-    .WithEnvironment("API_KEY",
-        builder.Configuration["Parameters:ApiKey"] ?? "")
+    .WithEnvironment("API_KEY", apiKey)
     // RAG Settings
     .WithEnvironment("RAG_ENABLED",
         builder.Configuration["Parameters:RAG:Enabled"] ?? "false")
@@ -128,8 +209,7 @@ else
         builder.Configuration["Parameters:RAG:EmbeddingModel"] ?? "text-embedding-3-small")
     .WithEnvironment("EMBEDDING_DIMENSIONS",
         builder.Configuration["Parameters:RAG:EmbeddingDimensions"] ?? "1536")
-    .WithEnvironment("EMBEDDING_DEPLOYMENT",
-        builder.Configuration["Parameters:RAG:EmbeddingDeployment"] ?? "")
+    .WithEnvironment("EMBEDDING_DEPLOYMENT", ragEmbeddingDeployment)
     // Processing Settings
     .WithEnvironment("LARGE_DOC_THRESHOLD_KB",
         builder.Configuration["Parameters:Processing:LargeDocThresholdKb"] ?? "1500")
@@ -210,20 +290,35 @@ else
         .WithHttpHealthCheck("/api/health")
         .WithReference(backend)
         .WithEnvironment("API_URL", backend.GetEndpoint("http"))
-        .WithEnvironment("API_KEY",
-            builder.Configuration["Parameters:ApiKey"] ?? "")
-        .WithEnvironment("AUTH_SECRET",
-            builder.Configuration["Parameters:Frontend:AuthSecret"] ?? "")
-        .WithEnvironment("AUTH_USER_1",
-            builder.Configuration["Parameters:Frontend:AuthUser1"] ?? "")
-        .WithEnvironment("AUTH_USER_2",
-            builder.Configuration["Parameters:Frontend:AuthUser2"] ?? "")
-        .WithEnvironment("AUTH_USER_3",
-            builder.Configuration["Parameters:Frontend:AuthUser3"] ?? "")
-        .WithEnvironment("AUTH_USER_4",
-            builder.Configuration["Parameters:Frontend:AuthUser4"] ?? "")
-        .WithEnvironment("AUTH_USER_5",
-            builder.Configuration["Parameters:Frontend:AuthUser5"] ?? "");
+        .WithEnvironment("API_KEY", apiKey)
+        .WithEnvironment("AUTH_SECRET", frontendAuthSecret)
+        .WithEnvironment("AUTH_USER_1", frontendAuthUser1)
+        .WithEnvironment("AUTH_USER_2", frontendAuthUser2)
+        .WithEnvironment("AUTH_USER_3", frontendAuthUser3)
+        .WithEnvironment("AUTH_USER_4", frontendAuthUser4)
+        .WithEnvironment("AUTH_USER_5", frontendAuthUser5);
 }
 
 builder.Build().Run();
+
+// =============================================================================
+// Custom KeyVaultSecretManager to add "Parameters:" prefix
+// =============================================================================
+// This class maps Key Vault secret names to configuration keys with the "Parameters:" prefix.
+// For example: 'AzureOpenAI--Endpoint' in Key Vault becomes 'Parameters:AzureOpenAI:Endpoint'
+public class PrefixKeyVaultSecretManager : KeyVaultSecretManager
+{
+    private readonly string _prefix;
+
+    public PrefixKeyVaultSecretManager(string prefix)
+    {
+        _prefix = prefix + ":";
+    }
+
+    public override string GetKey(KeyVaultSecret secret)
+    {
+        // Convert Key Vault secret name (e.g., 'AzureOpenAI--Endpoint')
+        // to configuration key (e.g., 'Parameters:AzureOpenAI:Endpoint')
+        return _prefix + secret.Name.Replace("--", ":");
+    }
+}
