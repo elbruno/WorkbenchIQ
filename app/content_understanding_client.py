@@ -18,6 +18,15 @@ try:
 except ImportError:
     AZURE_IDENTITY_AVAILABLE = False
 
+# OpenTelemetry tracer (conditional)
+try:
+    from opentelemetry import trace
+    tracer = trace.get_tracer(__name__)
+    OTEL_AVAILABLE = True
+except ImportError:
+    tracer = None
+    OTEL_AVAILABLE = False
+
 logger = setup_logging()
 
 # Polling timeout in seconds for long-running operations
@@ -256,18 +265,40 @@ def analyze_document(
     for attempt in range(1, max_retries + 1):
         try:
             # Send the analyze request
-            resp = requests.post(
-                url,
-                params=params,
-                headers=headers,
-                data=file_bytes,
-                timeout=120,
-            )
-            _raise_for_status_with_detail(resp)
-            
-            # Poll for the result
-            result = poll_result(resp, headers)
-            return result
+            if OTEL_AVAILABLE and tracer:
+                with tracer.start_as_current_span("azure.content_understanding.analyze") as span:
+                    span.set_attribute("azure.cu.analyzer_id", analyzer_id)
+                    span.set_attribute("azure.cu.api_version", settings.api_version)
+                    span.set_attribute("azure.cu.output_markdown", output_markdown)
+                    span.set_attribute("retry.attempt", attempt)
+                    
+                    resp = requests.post(
+                        url,
+                        params=params,
+                        headers=headers,
+                        data=file_bytes,
+                        timeout=120,
+                    )
+                    span.set_attribute("http.status_code", resp.status_code)
+                    _raise_for_status_with_detail(resp)
+                    
+                    # Poll for the result
+                    result = poll_result(resp, headers)
+                    return result
+            else:
+                # Non-instrumented path
+                resp = requests.post(
+                    url,
+                    params=params,
+                    headers=headers,
+                    data=file_bytes,
+                    timeout=120,
+                )
+                _raise_for_status_with_detail(resp)
+                
+                # Poll for the result
+                result = poll_result(resp, headers)
+                return result
 
         except Exception as exc:  # noqa: BLE001
             last_err = exc
@@ -330,17 +361,36 @@ def analyze_image(
     last_err: Exception | None = None
     for attempt in range(1, max_retries + 1):
         try:
-            resp = requests.post(
-                url,
-                params=params,
-                headers=headers,
-                data=file_bytes,
-                timeout=120,
-            )
-            _raise_for_status_with_detail(resp)
-            
-            result = poll_result(resp, headers)
-            return result
+            if OTEL_AVAILABLE and tracer:
+                with tracer.start_as_current_span("azure.content_understanding.analyze_image") as span:
+                    span.set_attribute("azure.cu.analyzer_id", analyzer_id)
+                    span.set_attribute("azure.cu.api_version", settings.api_version)
+                    span.set_attribute("retry.attempt", attempt)
+                    
+                    resp = requests.post(
+                        url,
+                        params=params,
+                        headers=headers,
+                        data=file_bytes,
+                        timeout=120,
+                    )
+                    span.set_attribute("http.status_code", resp.status_code)
+                    _raise_for_status_with_detail(resp)
+                    
+                    result = poll_result(resp, headers)
+                    return result
+            else:
+                resp = requests.post(
+                    url,
+                    params=params,
+                    headers=headers,
+                    data=file_bytes,
+                    timeout=120,
+                )
+                _raise_for_status_with_detail(resp)
+                
+                result = poll_result(resp, headers)
+                return result
         
         except Exception as exc:
             last_err = exc
@@ -405,18 +455,39 @@ def analyze_video(
     last_err: Exception | None = None
     for attempt in range(1, max_retries + 1):
         try:
-            resp = requests.post(
-                url,
-                params=params,
-                headers=headers,
-                data=file_bytes,
-                timeout=180,  # Longer timeout for video upload
-            )
-            _raise_for_status_with_detail(resp)
-            
-            # Use longer timeout for video polling
-            result = poll_result(resp, headers, timeout_seconds=poll_timeout_seconds)
-            return result
+            if OTEL_AVAILABLE and tracer:
+                with tracer.start_as_current_span("azure.content_understanding.analyze_video") as span:
+                    span.set_attribute("azure.cu.analyzer_id", analyzer_id)
+                    span.set_attribute("azure.cu.api_version", settings.api_version)
+                    span.set_attribute("azure.cu.poll_timeout_seconds", poll_timeout_seconds)
+                    span.set_attribute("retry.attempt", attempt)
+                    
+                    resp = requests.post(
+                        url,
+                        params=params,
+                        headers=headers,
+                        data=file_bytes,
+                        timeout=180,  # Longer timeout for video upload
+                    )
+                    span.set_attribute("http.status_code", resp.status_code)
+                    _raise_for_status_with_detail(resp)
+                    
+                    # Use longer timeout for video polling
+                    result = poll_result(resp, headers, timeout_seconds=poll_timeout_seconds)
+                    return result
+            else:
+                resp = requests.post(
+                    url,
+                    params=params,
+                    headers=headers,
+                    data=file_bytes,
+                    timeout=180,  # Longer timeout for video upload
+                )
+                _raise_for_status_with_detail(resp)
+                
+                # Use longer timeout for video polling
+                result = poll_result(resp, headers, timeout_seconds=poll_timeout_seconds)
+                return result
         
         except Exception as exc:
             last_err = exc

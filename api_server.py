@@ -47,6 +47,20 @@ from app.utils import setup_logging
 # Setup logging
 logger = setup_logging()
 
+# OpenTelemetry imports (conditional on availability)
+import os
+try:
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry.instrumentation.requests import RequestsInstrumentor
+    OTEL_AVAILABLE = True
+except ImportError:
+    OTEL_AVAILABLE = False
+    logger.info("OpenTelemetry packages not available - tracing disabled")
+
 # Initialize FastAPI app
 app = FastAPI(
     title="WorkbenchIQ API",
@@ -85,11 +99,29 @@ app.add_middleware(
 )
 
 
+# Initialize OpenTelemetry tracing (conditional on OTEL_EXPORTER_OTLP_ENDPOINT)
+# Aspire sets this automatically when running in the AppHost
+otel_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+if otel_endpoint and OTEL_AVAILABLE:
+    logger.info(f"Initializing OpenTelemetry tracing with endpoint: {otel_endpoint}")
+    provider = TracerProvider()
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    trace.set_tracer_provider(provider)
+    FastAPIInstrumentor.instrument_app(app)
+    RequestsInstrumentor().instrument()
+    logger.info("OpenTelemetry instrumentation enabled")
+elif otel_endpoint and not OTEL_AVAILABLE:
+    logger.warning("OTEL endpoint configured but OpenTelemetry packages not installed")
+else:
+    logger.info("OpenTelemetry tracing disabled (no OTEL_EXPORTER_OTLP_ENDPOINT)")
+
+
 # Health check middleware - bypasses auth so Azure probes and CI can reach /
 @app.middleware("http")
 async def health_check_bypass(request: Request, call_next):
-    if request.url.path == "/":
-        return JSONResponse({"status": "ok", "version": "0.3.0", "name": "WorkbenchIQ"})
+    if request.url.path == "/" or request.url.path.startswith("/health/"):
+        response = await call_next(request)
+        return response
     return await call_next(request)
 
 
@@ -138,6 +170,25 @@ async def startup_event():
         except Exception as e:
             logger.error("Failed to initialize database pool: %s", e)
             raise
+
+
+# Health check endpoints (bypassing auth via middleware)
+@app.get("/health/ready")
+async def health_ready():
+    """Readiness check — can the service handle requests?"""
+    return {"status": "ready", "version": "0.3.0"}
+
+
+@app.get("/health/live")
+async def health_live():
+    """Liveness check — is the service alive?"""
+    return {"status": "alive", "version": "0.3.0"}
+
+
+@app.get("/")
+async def root():
+    """Root endpoint with basic service info."""
+    return {"status": "ok", "version": "0.3.0", "name": "WorkbenchIQ"}
 
 
 # Pydantic models for API responses

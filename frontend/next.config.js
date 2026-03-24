@@ -23,6 +23,7 @@ const nextConfig = {
   // Increase serverActions timeout
   experimental: {
     proxyTimeout: 120000, // 120 seconds
+    instrumentationHook: true, // Enable instrumentation.ts for OpenTelemetry
   },
 
   // Expose API_URL to the browser bundle as NEXT_PUBLIC_API_URL

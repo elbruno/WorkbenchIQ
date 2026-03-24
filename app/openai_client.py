@@ -12,6 +12,15 @@ from .utils import setup_logging
 
 logger = setup_logging()
 
+# OpenTelemetry tracer (conditional)
+try:
+    from opentelemetry import trace
+    tracer = trace.get_tracer(__name__)
+    OTEL_AVAILABLE = True
+except ImportError:
+    tracer = None
+    OTEL_AVAILABLE = False
+
 # Cache for Azure AD token
 _token_cache: Dict[str, Any] = {}
 
@@ -49,24 +58,57 @@ def _call_openai_endpoint(
     endpoint_name: str = "primary",
 ) -> Dict[str, Any]:
     """Make a single call to an OpenAI endpoint."""
-    resp = requests.post(url, headers=headers, params=params, json=body, timeout=60)
-    if resp.status_code >= 400:
-        raise OpenAIClientError(
-            f"OpenAI API error {resp.status_code}: {resp.text}"
-        )
+    if OTEL_AVAILABLE and tracer:
+        with tracer.start_as_current_span("azure.openai.completion") as span:
+            span.set_attribute("azure.openai.endpoint", endpoint_name)
+            span.set_attribute("azure.openai.model", body.get("model", "unknown"))
+            span.set_attribute("azure.openai.temperature", body.get("temperature", 0.0))
+            span.set_attribute("azure.openai.max_tokens", body.get("max_tokens", 0))
+            
+            resp = requests.post(url, headers=headers, params=params, json=body, timeout=60)
+            span.set_attribute("http.status_code", resp.status_code)
+            
+            if resp.status_code >= 400:
+                span.set_attribute("error", True)
+                raise OpenAIClientError(
+                    f"OpenAI API error {resp.status_code}: {resp.text}"
+                )
 
-    data = resp.json()
-    try:
-        choice = data["choices"][0]
-        content = choice["message"]["content"]
-    except Exception as exc:
-        raise OpenAIClientError(
-            f"Unexpected OpenAI response: {json.dumps(data)}"
-        ) from exc
+            data = resp.json()
+            try:
+                choice = data["choices"][0]
+                content = choice["message"]["content"]
+            except Exception as exc:
+                span.set_attribute("error", True)
+                raise OpenAIClientError(
+                    f"Unexpected OpenAI response: {json.dumps(data)}"
+                ) from exc
 
-    usage = data.get("usage", {})
-    logger.debug("Successfully called %s endpoint", endpoint_name)
-    return {"content": content, "usage": usage}
+            usage = data.get("usage", {})
+            span.set_attribute("azure.openai.prompt_tokens", usage.get("prompt_tokens", 0))
+            span.set_attribute("azure.openai.completion_tokens", usage.get("completion_tokens", 0))
+            logger.debug("Successfully called %s endpoint", endpoint_name)
+            return {"content": content, "usage": usage}
+    else:
+        # Non-instrumented path (when OTEL not available)
+        resp = requests.post(url, headers=headers, params=params, json=body, timeout=60)
+        if resp.status_code >= 400:
+            raise OpenAIClientError(
+                f"OpenAI API error {resp.status_code}: {resp.text}"
+            )
+
+        data = resp.json()
+        try:
+            choice = data["choices"][0]
+            content = choice["message"]["content"]
+        except Exception as exc:
+            raise OpenAIClientError(
+                f"Unexpected OpenAI response: {json.dumps(data)}"
+            ) from exc
+
+        usage = data.get("usage", {})
+        logger.debug("Successfully called %s endpoint", endpoint_name)
+        return {"content": content, "usage": usage}
 
 
 def chat_completion(

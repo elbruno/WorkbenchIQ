@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { trace, SpanStatusCode } from '@opentelemetry/api';
 
 const API_BASE_URL = process.env.API_URL || 'http://localhost:8000';
+const tracer = trace.getTracer('workbenchiq-frontend');
 
 /**
  * Catch-all API route that proxies unhandled requests to the backend.
@@ -46,8 +48,17 @@ async function proxyRequest(
   pathSegments: string[],
   method?: string
 ) {
+  const path = pathSegments.join('/');
+  const httpMethod = method || request.method;
+  const span = tracer.startSpan(`proxy ${httpMethod} /api/${path}`, {
+    attributes: {
+      'http.method': httpMethod,
+      'http.route': `/api/${path}`,
+      'http.target': API_BASE_URL,
+    },
+  });
+
   try {
-    const path = pathSegments.join('/');
     const searchParams = request.nextUrl.searchParams;
     const queryString = searchParams.toString();
     const url = queryString
@@ -65,7 +76,7 @@ async function proxyRequest(
     }
 
     const fetchOptions: RequestInit = {
-      method: method || request.method,
+      method: httpMethod,
       headers,
       cache: 'no-store',
     };
@@ -92,12 +103,15 @@ async function proxyRequest(
     }
 
     const response = await fetch(url, fetchOptions);
+    span.setAttribute('http.status_code', response.status);
 
     // Handle non-JSON responses
     const contentType = response.headers.get('content-type') || '';
+    let result: NextResponse;
+    
     if (contentType.includes('application/json')) {
       const data = await response.json();
-      return NextResponse.json(data, { status: response.status });
+      result = NextResponse.json(data, { status: response.status });
     } else {
       // For binary content (PDFs, images, video), use arrayBuffer to
       // preserve bytes. Using response.text() corrupts binary data and
@@ -114,22 +128,33 @@ async function proxyRequest(
         if (contentDisposition) responseHeaders['Content-Disposition'] = contentDisposition;
         const acceptRanges = response.headers.get('accept-ranges');
         if (acceptRanges) responseHeaders['Accept-Ranges'] = acceptRanges;
-        return new NextResponse(buffer, {
+        result = new NextResponse(buffer, {
           status: response.status,
           headers: responseHeaders,
         });
+      } else {
+        const text = await response.text();
+        result = new NextResponse(text, {
+          status: response.status,
+          headers: { 'Content-Type': contentType },
+        });
       }
-      const text = await response.text();
-      return new NextResponse(text, {
-        status: response.status,
-        headers: { 'Content-Type': contentType },
-      });
     }
+
+    span.setStatus({ code: SpanStatusCode.OK });
+    return result;
   } catch (error) {
     console.error('API proxy error:', error);
+    span.setStatus({ 
+      code: SpanStatusCode.ERROR,
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+    span.recordException(error as Error);
     return NextResponse.json(
       { error: 'Failed to proxy request to backend' },
       { status: 500 }
     );
+  } finally {
+    span.end();
   }
 }

@@ -21,6 +21,7 @@ if (enablePostgres)
 var backend = builder.AddPythonApp("backend-api", "../../", "api_server.py")
     .WithHttpEndpoint(port: 8000, name: "http")
     .WithExternalHttpEndpoints()
+    .WithHttpHealthCheck("/health/ready")
     // Azure Content Understanding
     .WithEnvironment("AZURE_CONTENT_UNDERSTANDING_ENDPOINT",
         builder.Configuration["Parameters:ContentUnderstanding:Endpoint"] ?? "")
@@ -182,6 +183,7 @@ var frontend = builder.AddNpmApp("frontend", "../../frontend", "dev")
     .WithHttpEndpoint(port: 3000, name: "http", isProxied: false)
     .WithExternalHttpEndpoints()
     .WithReference(backend)
+    .WithHttpHealthCheck("/api/health")
     .WithEnvironment("API_URL", backend.GetEndpoint("http"))
     .WithEnvironment("API_KEY",
         builder.Configuration["Parameters:ApiKey"] ?? "")
