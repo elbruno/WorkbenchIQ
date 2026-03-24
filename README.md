@@ -6,6 +6,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Node.js 18+](https://img.shields.io/badge/node.js-18+-green.svg)](https://nodejs.org/)
+[![.NET Aspire](https://img.shields.io/badge/.NET%20Aspire-orchestrated-512BD4.svg)](https://learn.microsoft.com/dotnet/aspire/)
 [![Azure AI](https://img.shields.io/badge/Azure-AI%20Services-0078D4.svg)](https://azure.microsoft.com/en-us/products/ai-services/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -169,69 +170,54 @@ WorkbenchIQ accelerates the daily work of underwriters and claims processors:
 ## Architecture
 
 ```
-+-----------------------------------------------------------------------------+
-|                              USER INTERFACE                                  |
-|                                                                             |
-|    +-------------+    +-------------+    +-------------+                    |
-|    | Underwriting|    |   Claims    |    |  Mortgage   |                    |
-|    |  Workbench  |    |  Workbench  |    |  Workbench  |                    |
-|    +------+------+    +------+------+    +------+------+                    |
-|           |                  |                  |                           |
-|           +------------------+------------------+                           |
-|                              |                                              |
-|                    +---------v---------+                                    |
-|                    |   Next.js 14 UI   |                                    |
-|                    |  (React + Tailwind)|                                   |
-|                    +---------+---------+                                    |
-+------------------------------+----------------------------------------------+
-                               | REST API
-+------------------------------+----------------------------------------------+
-|                    +---------v---------+                                    |
-|                    |   FastAPI Server  |                                    |
-|                    |   (Python 3.10+)  |                                    |
-|                    +---------+---------+                                    |
-|                              |                                              |
-|              +---------------+---------------+                              |
-|              |               |               |                              |
-|    +---------v-----+ +-------v-------+ +-----v-----+                        |
-|    |   Personas    | |    Prompts    | |  Storage  |                        |
-|    |    Engine     | |    Catalog    | |  Manager  |                        |
-|    +---------------+ +---------------+ +-----------+                        |
-|                              |                                              |
-|                              | BACKEND                                      |
-+------------------------------+----------------------------------------------+
++===========================================================================+
+|                       .NET ASPIRE ORCHESTRATION                           |
+|                  (AppHost — single "dotnet run")                          |
+|                                                                           |
+|  Service Discovery | Health Checks | OpenTelemetry | Aspire Dashboard    |
+|                                                                           |
+|  +-------------------------------+  +-------------------------------+     |
+|  |         FRONTEND              |  |          BACKEND              |     |
+|  |         Next.js 14            |  |          FastAPI / Python     |     |
+|  |      (React + Tailwind)       |  |          (port 8000)          |     |
+|  |         (port 3000)           |  |                               |     |
+|  |                               |  |   +----------+ +----------+  |     |
+|  |  +----------+ +----------+   |  |   | Personas | | Prompts  |  |     |
+|  |  |Underwrite| |  Claims  |   |  |   |  Engine  | | Catalog  |  |     |
+|  |  |Workbench | |Workbench |   |  |   +----------+ +----------+  |     |
+|  |  +----------+ +----------+   |  |   +----------+               |     |
+|  |  +----------+                |  |   | Storage  |               |     |
+|  |  | Mortgage |                |  |   | Manager  |               |     |
+|  |  |Workbench |                |  |   +----------+               |     |
+|  |  +----------+                |  |                               |     |
+|  +-------------------------------+  +-------------------------------+     |
+|                                                                           |
++===========================================================================+
                                |
-+------------------------------+----------------------------------------------+
-|                              | AZURE AI SERVICES                            |
-|              +---------------+---------------+                              |
-|              |                               |                              |
-|    +---------v----------+      +-------------v-------------+                |
-|    |  Azure AI Content  |      |      Azure OpenAI         |                |
-|    |   Understanding    |      |       (LLM + Embeddings)  |                |
-|    |                    |      |                           |                |
-|    | - Document Search  |      | - Underwriting Summaries  |                |
-|    | - Field Extraction |      | - Risk Assessment         |                |
-|    | - OCR + Layout     |      | - Medical Analysis        |                |
-|    | - Confidence Scores|      | - Requirements Checklist  |                |
-|    +--------------------+      | - text-embedding-3-small  |                |
-|                                +---------------------------+                |
-|                                              |                              |
-+----------------------------------------------+------------------------------+
+               +---------------+---------------+
+               |                               |
+     +---------v----------+      +-------------v-------------+
+     |  Azure AI Content  |      |      Azure OpenAI         |
+     |   Understanding    |      |   (LLM + Embeddings)      |
+     |                    |      |                           |
+     | - Document Search  |      | - Underwriting Summaries  |
+     | - Field Extraction |      | - Risk Assessment         |
+     | - OCR + Layout     |      | - Medical Analysis        |
+     | - Confidence Scores|      | - Requirements Checklist  |
+     +--------------------+      | - text-embedding-3-small  |
+                                 +---------------------------+
                                                |
-+----------------------------------------------+------------------------------+
-|                              | AZURE DATA SERVICES (Optional)               |
-|                              |                                              |
-|                    +---------v---------+                                    |
-|                    | Azure PostgreSQL  |                                    |
-|                    | Flexible Server   |                                    |
-|                    |                   |                                    |
-|                    | - pgvector (HNSW) |                                    |
-|                    | - pg_trgm (GIN)   |                                    |
-|                    | - Policy Chunks   |                                    |
-|                    | - RAG Search      |                                    |
-|                    +-------------------+                                    |
-|                                                                             |
-+-----------------------------------------------------------------------------+
+               +-------------------------------+
+               |
+     +---------v---------+
+     | Azure PostgreSQL  |   (Optional — RAG-powered policy search)
+     | Flexible Server   |
+     |                   |
+     | - pgvector (HNSW) |
+     | - pg_trgm (GIN)   |
+     | - Policy Chunks   |
+     | - RAG Search      |
+     +-------------------+
 ```
 
 ### Data Flow
@@ -249,6 +235,8 @@ WorkbenchIQ accelerates the daily work of underwriters and claims processors:
   PDF files stored locally in data/applications/{id}/files/
 ```
 
+> **Note:** All services are orchestrated by .NET Aspire with distributed tracing via OpenTelemetry. Use the Aspire Dashboard to view end-to-end traces, monitor service health, and inspect logs across the entire request flow.
+
 ---
 
 ## Available Workbenches
@@ -263,9 +251,10 @@ WorkbenchIQ accelerates the daily work of underwriters and claims processors:
 
 ## Prerequisites
 
-- **Python 3.10+** - Backend runtime
-- **Node.js 18+** - Frontend runtime
-- **[uv](https://github.com/astral-sh/uv)** or **pip** - Python dependency management
+- **[.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)** (10.0.201+) — Aspire orchestration (the recommended way to run WorkbenchIQ)
+- **Python 3.10+** — Backend runtime
+- **Node.js 18+** — Frontend runtime
+- **[uv](https://github.com/astral-sh/uv)** or **pip** — Python dependency management
 - **Azure Subscription** with the following services:
   - **Azure AI Content Understanding** with `prebuilt-documentSearch` analyzer
   - **Azure OpenAI Service** with `gpt-4.1` or `gpt-4o` deployment
@@ -274,10 +263,44 @@ WorkbenchIQ accelerates the daily work of underwriters and claims processors:
 
 ## Quick Start
 
-### 1. Clone & Install Dependencies
+### Recommended: .NET Aspire (Single Command)
+
+The fastest way to run WorkbenchIQ. Aspire starts both backend and frontend, manages configuration, and provides a dashboard with distributed tracing.
 
 ```bash
-# Clone the repository
+# 1. Clone the repository
+git clone https://github.com/microsoft/workbenchiq.git
+cd workbenchiq
+
+# 2. Restore and run
+cd aspire/WorkbenchIQ.AppHost
+dotnet restore
+dotnet run
+```
+
+**What happens on first run:**
+
+1. The **Aspire Dashboard** opens automatically in your browser
+2. The dashboard **prompts you for Azure credentials** (endpoints, API keys) — no `.env` file needed
+3. Values are stored in **.NET User Secrets** — you won't be prompted again on subsequent runs
+4. Both **backend** (FastAPI, port 8000) and **frontend** (Next.js, port 3000) start automatically
+
+| Service | URL |
+|---------|-----|
+| **Aspire Dashboard** | http://localhost:15000 |
+| Frontend | http://localhost:3000 |
+| API | http://localhost:8000 |
+| API Docs (Swagger) | http://localhost:8000/docs |
+
+> 📖 For a detailed walkthrough of every parameter the dashboard prompts for, see **[aspire/FIRST-RUN.md](aspire/FIRST-RUN.md)**.
+
+### Alternative: Manual Setup (Without Aspire)
+
+If you prefer to run the services individually without Aspire:
+
+#### 1. Install Dependencies
+
+```bash
 git clone https://github.com/microsoft/workbenchiq.git
 cd workbenchiq
 
@@ -293,7 +316,7 @@ npm install
 cd ..
 ```
 
-### 2. Configure Azure Services
+#### 2. Configure Azure Services
 
 Create a `.env` file in the project root:
 
@@ -321,7 +344,7 @@ AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4-1
 | **Azure AD** (Recommended) | Production, CI/CD | Set `AZURE_CONTENT_UNDERSTANDING_USE_AZURE_AD=true` and run `az login` |
 | **API Key** | Local development | Set `USE_AZURE_AD=false` and provide `AZURE_CONTENT_UNDERSTANDING_API_KEY` |
 
-### 3. Run the Application
+#### 3. Run the Application
 
 **Option 1: Run both servers together**
 
@@ -344,7 +367,7 @@ cd frontend
 npm run dev
 ```
 
-### 4. Access the Application
+#### 4. Access the Application
 
 | Service | URL |
 |---------|-----|
@@ -442,52 +465,62 @@ When deploying to Azure App Service, set `API_KEY` as an app setting. The `scrip
 
 ```
 workbenchiq/
-├── api_server.py                 # FastAPI backend server
+├── aspire/                              # .NET Aspire orchestration
+│   ├── WorkbenchIQ.AppHost/             # Orchestrator — the single entry point
+│   │   ├── Program.cs                   # Service composition + 25 parameter definitions
+│   │   ├── appsettings.json             # Default configuration & feature flags
+│   │   └── setup-secrets.ps1            # Optional CLI-based secrets setup
+│   ├── WorkbenchIQ.ServiceDefaults/     # Shared service configuration (OTEL, health, resilience)
+│   ├── infra/                           # Azure deployment infrastructure
+│   │   ├── main.bicep                   # Container Apps + Key Vault (70+ env vars)
+│   │   └── KEYVAULT-SETUP.md            # Production secrets guide
+│   └── FIRST-RUN.md                     # Detailed first-run guide for new developers
+├── api_server.py                        # FastAPI backend server
 ├── app/
-│   ├── config.py                 # Configuration management
-│   ├── personas.py               # Multi-persona definitions & field schemas
-│   ├── storage.py                # File and metadata handling
-│   ├── prompts.py                # Prompt templates & catalog
-│   ├── openai_client.py          # Azure OpenAI integration
+│   ├── config.py                        # Configuration management
+│   ├── personas.py                      # Multi-persona definitions & field schemas
+│   ├── storage.py                       # File and metadata handling
+│   ├── prompts.py                       # Prompt templates & catalog
+│   ├── openai_client.py                 # Azure OpenAI integration
 │   ├── content_understanding_client.py  # Azure CU integration
-│   ├── processing.py             # Orchestration logic
-│   ├── underwriting_policies.py  # Policy loader and injector
-│   ├── utils.py                  # Helper utilities
-│   └── rag/                      # RAG module (optional PostgreSQL)
-│       ├── __init__.py           # RAG service exports
-│       ├── chunker.py            # Policy text chunking
-│       ├── embedder.py           # Azure OpenAI embedding client
-│       ├── repository.py         # PostgreSQL CRUD operations
-│       ├── search.py             # Semantic & hybrid search
-│       ├── service.py            # Unified RAG service interface
-│       └── indexer.py            # Policy indexing pipeline
-├── scripts/                      # Utility scripts
-│   ├── setup_postgresql_rag.py   # Azure PostgreSQL provisioning
-│   └── index_policies.py         # CLI for policy indexing
-├── prompts/                      # Git-tracked prompts & policies
-│   ├── prompts.json              # LLM prompts for document analysis
-│   ├── risk-analysis-prompts.json # Risk analysis prompt templates
+│   ├── processing.py                    # Orchestration logic
+│   ├── underwriting_policies.py         # Policy loader and injector
+│   ├── utils.py                         # Helper utilities
+│   └── rag/                             # RAG module (optional PostgreSQL)
+│       ├── __init__.py                  # RAG service exports
+│       ├── chunker.py                   # Policy text chunking
+│       ├── embedder.py                  # Azure OpenAI embedding client
+│       ├── repository.py                # PostgreSQL CRUD operations
+│       ├── search.py                    # Semantic & hybrid search
+│       ├── service.py                   # Unified RAG service interface
+│       └── indexer.py                   # Policy indexing pipeline
+├── scripts/                             # Utility scripts
+│   ├── setup_postgresql_rag.py          # Azure PostgreSQL provisioning
+│   └── index_policies.py               # CLI for policy indexing
+├── prompts/                             # Git-tracked prompts & policies
+│   ├── prompts.json                     # LLM prompts for document analysis
+│   ├── risk-analysis-prompts.json       # Risk analysis prompt templates
 │   ├── life-health-underwriting-policies.json # Underwriting policy manual
-│   └── policies.json             # Claims/health plan policies
-├── frontend/                     # Next.js 14 frontend
+│   └── policies.json                    # Claims/health plan policies
+├── frontend/                            # Next.js 14 frontend
 │   ├── src/
-│   │   ├── app/                  # Next.js pages (App Router)
-│   │   ├── components/           # React components
-│   │   │   ├── claims/           # Claims-specific components
-│   │   │   ├── chat/             # Chat components
-│   │   │   │   ├── ChatCards.tsx     # Rich response cards (risk factors, recommendations)
+│   │   ├── app/                         # Next.js pages (App Router)
+│   │   ├── components/                  # React components
+│   │   │   ├── claims/                  # Claims-specific components
+│   │   │   ├── chat/                    # Chat components
+│   │   │   │   ├── ChatCards.tsx        # Rich response cards
 │   │   │   │   └── ChatHistoryPanel.tsx
-│   │   │   ├── ChatDrawer.tsx    # Slide-out chat interface
+│   │   │   ├── ChatDrawer.tsx           # Slide-out chat interface
 │   │   │   ├── PatientHeader.tsx
 │   │   │   ├── LabResultsPanel.tsx
 │   │   │   └── ...
-│   │   └── lib/                  # Utilities, API client, PersonaContext
+│   │   └── lib/                         # Utilities, API client, PersonaContext
 │   └── package.json
-├── tests/                        # Test suite and fixtures
-├── data/                         # Application data storage (gitignored)
+├── tests/                               # Test suite and fixtures
+├── data/                                # Application data storage (gitignored)
 ├── docs/
-│   └── images/                   # Screenshots for documentation
-└── .env.example                  # Environment template
+│   └── images/                          # Screenshots for documentation
+└── .env.example                         # Environment template (manual setup only)
 ```
 
 ---
@@ -529,7 +562,27 @@ workbenchiq/
 
 ## Configuration
 
+### Aspire Configuration (Recommended)
+
+When running with .NET Aspire, configuration is managed through two mechanisms:
+
+**Local Development — Aspire Dashboard + User Secrets:**
+
+1. On first run, the Aspire Dashboard prompts for all required parameters (endpoints, API keys, deployment names)
+2. Values are stored in **.NET User Secrets** — encrypted, per-user, outside source control
+3. Subsequent runs load secrets automatically — no re-entry needed
+4. Update individual values: `dotnet user-secrets set "Parameters:azure-openai-api-key" "new-value" --project aspire/WorkbenchIQ.AppHost`
+
+**Production — Azure Key Vault with Managed Identity:**
+
+1. Secrets stored in Azure Key Vault with RBAC access control
+2. Container Apps use managed identity — no credentials in config
+3. Set `AZURE_KEY_VAULT_URI=https://your-vault.vault.azure.net/` to activate
+4. See [aspire/infra/KEYVAULT-SETUP.md](aspire/infra/KEYVAULT-SETUP.md) for setup instructions
+
 ### Environment Variables
+
+> **Note:** When using Aspire, these environment variables are injected automatically from the dashboard parameters and `appsettings.json`. The table below is primarily relevant for the manual setup approach or for understanding the full configuration surface.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
@@ -731,16 +784,27 @@ uvicorn api_server:app --host 0.0.0.0 --port 8000
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| "Settings incomplete" | Missing environment variables | Check `.env` file, restart API server |
+| "Settings incomplete" | Missing environment variables | **Aspire:** Check dashboard for unpopulated parameters. **Manual:** Check `.env` file, restart API server |
 | 401/403 errors | Invalid API keys | Verify Azure credentials |
 | 404 errors | Wrong endpoint URLs | Remove trailing slashes from endpoints |
 | 429 errors | Rate limiting | Wait and retry, or increase quota |
 | CORS errors | Frontend can't reach API | Ensure API runs on port 8000 |
 
+### Aspire-Specific Issues
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Dashboard won't open | .NET SDK version too old | Install .NET 10 SDK (10.0.201+): `dotnet --version` to check |
+| Secrets not persisting | User Secrets misconfigured | Run `dotnet user-secrets list --project aspire/WorkbenchIQ.AppHost` to verify |
+| Services won't start | Python/Node.js not in PATH | Verify: `python --version` and `node --version` |
+| Port conflict on 8000/3000 | Another process on that port | Stop conflicting process or modify ports in `Program.cs` |
+| Backend fails with "Missing Azure credentials" | Dashboard parameters not entered | Re-check dashboard prompts; see [aspire/FIRST-RUN.md](aspire/FIRST-RUN.md) |
+
 ### Logs
 
-- API logs: Check terminal running `uvicorn`
-- Frontend logs: Browser developer console
+- **Aspire Dashboard**: http://localhost:15000 — structured logs, distributed traces, and metrics for all services
+- API logs: Check terminal running `uvicorn` (or the Aspire Dashboard logs panel)
+- Frontend logs: Browser developer console (or the Aspire Dashboard logs panel)
 - Azure logs: Azure Portal > Monitor > Logs
 
 ---
@@ -765,6 +829,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
+- Orchestrated with [.NET Aspire](https://learn.microsoft.com/dotnet/aspire/) for unified service management and observability
 - Built with [Azure AI Content Understanding](https://azure.microsoft.com/en-us/products/ai-services/ai-document-intelligence)
 - Powered by [Azure OpenAI Service](https://azure.microsoft.com/en-us/products/ai-services/openai-service)
 - UI built with [Next.js](https://nextjs.org/) and [Tailwind CSS](https://tailwindcss.com/)

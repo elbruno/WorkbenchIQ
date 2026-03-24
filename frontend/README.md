@@ -46,6 +46,8 @@ frontend/
 - npm or yarn
 - Python backend running (see parent README)
 
+> **Tip:** The recommended way to run WorkbenchIQ is with [.NET Aspire](../aspire/FIRST-RUN.md), which starts both the backend and frontend together with a single `dotnet run` command. The instructions below are for running the frontend standalone.
+
 ## Installation
 
 ```bash
