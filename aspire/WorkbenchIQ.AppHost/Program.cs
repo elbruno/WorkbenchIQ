@@ -1,27 +1,54 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
 // =============================================================================
-// Optional PostgreSQL Container (for local development)
+// Deployment Mode Detection
 // =============================================================================
-var enablePostgres = builder.Configuration["Parameters:EnablePostgres"]?.Equals("true", StringComparison.OrdinalIgnoreCase) ?? false;
+// When ASPIRE_DEPLOY is set, use container-based orchestration for deployment.
+// Otherwise, use process-based orchestration for local development.
+var isDeployMode = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPIRE_DEPLOY"));
 
-IResourceBuilder<PostgresServerResource>? postgres = null;
-IResourceBuilder<PostgresDatabaseResource>? workbenchiqDb = null;
-
-if (enablePostgres)
+if (isDeployMode)
 {
-    postgres = builder.AddPostgres("postgres")
-        .WithPgAdmin();
-    workbenchiqDb = postgres.AddDatabase("workbenchiq");
+    // =============================================================================
+    // DEPLOYMENT MODE: Container-based orchestration for Azure Container Apps
+    // =============================================================================
+    // Environment variables are injected by Azure Container Apps configuration.
+    // The Bicep template (aspire/infra/main.bicep) handles secrets and environment.
+    
+    builder.AddContainer("backend-api", "workbenchiq-backend", "latest")
+        .WithHttpEndpoint(port: 8000, name: "http")
+        .WithExternalHttpEndpoints()
+        .WithHttpHealthCheck("/health/ready");
+    
+    builder.AddContainer("frontend", "workbenchiq-frontend", "latest")
+        .WithHttpEndpoint(port: 3000, name: "http", isProxied: false)
+        .WithExternalHttpEndpoints()
+        .WithHttpHealthCheck("/api/health");
 }
-
-// =============================================================================
-// Backend API (Python/FastAPI)
-// =============================================================================
-var backend = builder.AddPythonApp("backend-api", "../../", "api_server.py")
-    .WithHttpEndpoint(port: 8000, name: "http")
-    .WithExternalHttpEndpoints()
-    .WithHttpHealthCheck("/health/ready")
+else
+{
+    // =============================================================================
+    // LOCAL DEVELOPMENT MODE: Process-based orchestration
+    // =============================================================================
+    
+    // Optional PostgreSQL Container (for local development)
+    var enablePostgres = builder.Configuration["Parameters:EnablePostgres"]?.Equals("true", StringComparison.OrdinalIgnoreCase) ?? false;
+    
+    IResourceBuilder<PostgresServerResource>? postgres = null;
+    IResourceBuilder<PostgresDatabaseResource>? workbenchiqDb = null;
+    
+    if (enablePostgres)
+    {
+        postgres = builder.AddPostgres("postgres")
+            .WithPgAdmin();
+        workbenchiqDb = postgres.AddDatabase("workbenchiq");
+    }
+    
+    // Backend API (Python/FastAPI)
+    var backend = builder.AddPythonApp("backend-api", "../../", "api_server.py")
+        .WithHttpEndpoint(port: 8000, name: "http")
+        .WithExternalHttpEndpoints()
+        .WithHttpHealthCheck("/health/ready")
     // Azure Content Understanding
     .WithEnvironment("AZURE_CONTENT_UNDERSTANDING_ENDPOINT",
         builder.Configuration["Parameters:ContentUnderstanding:Endpoint"] ?? "")
@@ -153,51 +180,50 @@ var backend = builder.AddPythonApp("backend-api", "../../", "api_server.py")
     .WithEnvironment("MAX_AMORT_UNINSURED",
         builder.Configuration["Parameters:MortgageUnderwriting:MaxAmortUninsured"] ?? "30");
 
-// PostgreSQL connection (when enabled)
-if (workbenchiqDb is not null)
-{
-    backend
-        .WithReference(workbenchiqDb)
-        .WithEnvironment("DATABASE_BACKEND", "postgresql")
-        .WithEnvironment("POSTGRESQL_HOST", () => workbenchiqDb.Resource.Parent.PrimaryEndpoint.Host)
-        .WithEnvironment("POSTGRESQL_PORT", () => workbenchiqDb.Resource.Parent.PrimaryEndpoint.Port.ToString())
-        .WithEnvironment("POSTGRESQL_DATABASE", () => workbenchiqDb.Resource.DatabaseName)
-        .WithEnvironment("POSTGRESQL_USER", postgres!.Resource.UserNameParameter!)
-        .WithEnvironment("POSTGRESQL_PASSWORD", postgres!.Resource.PasswordParameter!)
-        .WithEnvironment("POSTGRESQL_SSL_MODE",
-            builder.Configuration["Parameters:PostgreSQL:SslMode"] ?? "prefer")
-        .WithEnvironment("POSTGRESQL_SCHEMA",
-            builder.Configuration["Parameters:PostgreSQL:Schema"] ?? "public");
-}
-else
-{
-    // Use JSON backend if PostgreSQL is not enabled
-    backend.WithEnvironment("DATABASE_BACKEND",
-        builder.Configuration["Parameters:DatabaseBackend"] ?? "json");
-}
+    // PostgreSQL connection (when enabled)
+    if (workbenchiqDb is not null)
+    {
+        backend
+            .WithReference(workbenchiqDb)
+            .WithEnvironment("DATABASE_BACKEND", "postgresql")
+            .WithEnvironment("POSTGRESQL_HOST", () => workbenchiqDb.Resource.Parent.PrimaryEndpoint.Host)
+            .WithEnvironment("POSTGRESQL_PORT", () => workbenchiqDb.Resource.Parent.PrimaryEndpoint.Port.ToString())
+            .WithEnvironment("POSTGRESQL_DATABASE", () => workbenchiqDb.Resource.DatabaseName)
+            .WithEnvironment("POSTGRESQL_USER", postgres!.Resource.UserNameParameter!)
+            .WithEnvironment("POSTGRESQL_PASSWORD", postgres!.Resource.PasswordParameter!)
+            .WithEnvironment("POSTGRESQL_SSL_MODE",
+                builder.Configuration["Parameters:PostgreSQL:SslMode"] ?? "prefer")
+            .WithEnvironment("POSTGRESQL_SCHEMA",
+                builder.Configuration["Parameters:PostgreSQL:Schema"] ?? "public");
+    }
+    else
+    {
+        // Use JSON backend if PostgreSQL is not enabled
+        backend.WithEnvironment("DATABASE_BACKEND",
+            builder.Configuration["Parameters:DatabaseBackend"] ?? "json");
+    }
 
-// =============================================================================
-// Frontend (Next.js via npm)
-// =============================================================================
-var frontend = builder.AddNpmApp("frontend", "../../frontend", "dev")
-    .WithHttpEndpoint(port: 3000, name: "http", isProxied: false)
-    .WithExternalHttpEndpoints()
-    .WithReference(backend)
-    .WithHttpHealthCheck("/api/health")
-    .WithEnvironment("API_URL", backend.GetEndpoint("http"))
-    .WithEnvironment("API_KEY",
-        builder.Configuration["Parameters:ApiKey"] ?? "")
-    .WithEnvironment("AUTH_SECRET",
-        builder.Configuration["Parameters:Frontend:AuthSecret"] ?? "")
-    .WithEnvironment("AUTH_USER_1",
-        builder.Configuration["Parameters:Frontend:AuthUser1"] ?? "")
-    .WithEnvironment("AUTH_USER_2",
-        builder.Configuration["Parameters:Frontend:AuthUser2"] ?? "")
-    .WithEnvironment("AUTH_USER_3",
-        builder.Configuration["Parameters:Frontend:AuthUser3"] ?? "")
-    .WithEnvironment("AUTH_USER_4",
-        builder.Configuration["Parameters:Frontend:AuthUser4"] ?? "")
-    .WithEnvironment("AUTH_USER_5",
-        builder.Configuration["Parameters:Frontend:AuthUser5"] ?? "");
+    // Frontend (Next.js)
+    var frontend = builder.AddNpmApp("frontend", "../../frontend", "dev")
+        .WithHttpEndpoint(port: 3000, name: "http", isProxied: false)
+        .WithExternalHttpEndpoints()
+        .WithHttpHealthCheck("/api/health")
+        .WithReference(backend)
+        .WithEnvironment("API_URL", backend.GetEndpoint("http"))
+        .WithEnvironment("API_KEY",
+            builder.Configuration["Parameters:ApiKey"] ?? "")
+        .WithEnvironment("AUTH_SECRET",
+            builder.Configuration["Parameters:Frontend:AuthSecret"] ?? "")
+        .WithEnvironment("AUTH_USER_1",
+            builder.Configuration["Parameters:Frontend:AuthUser1"] ?? "")
+        .WithEnvironment("AUTH_USER_2",
+            builder.Configuration["Parameters:Frontend:AuthUser2"] ?? "")
+        .WithEnvironment("AUTH_USER_3",
+            builder.Configuration["Parameters:Frontend:AuthUser3"] ?? "")
+        .WithEnvironment("AUTH_USER_4",
+            builder.Configuration["Parameters:Frontend:AuthUser4"] ?? "")
+        .WithEnvironment("AUTH_USER_5",
+            builder.Configuration["Parameters:Frontend:AuthUser5"] ?? "");
+}
 
 builder.Build().Run();

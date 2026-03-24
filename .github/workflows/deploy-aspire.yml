@@ -1,0 +1,298 @@
+name: Deploy to Azure Container Apps (Aspire)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  AZURE_RESOURCE_GROUP: 'work-bench-iq-rg'
+  REGISTRY_NAME: 'crworkbenchiq'
+  BACKEND_IMAGE: 'workbenchiq-backend'
+  FRONTEND_IMAGE: 'workbenchiq-frontend'
+  PYTHON_VERSION: '3.10'
+  NODE_VERSION: '18.x'
+
+jobs:
+  # ===========================================================================
+  # Build Backend Container
+  # ===========================================================================
+  build-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
+
+      - name: Login to Azure Container Registry
+        run: |
+          az acr login --name ${{ env.REGISTRY_NAME }}
+
+      - name: Build and push backend container
+        run: |
+          docker build -t ${{ env.REGISTRY_NAME }}.azurecr.io/${{ env.BACKEND_IMAGE }}:${{ github.sha }} \
+                       -t ${{ env.REGISTRY_NAME }}.azurecr.io/${{ env.BACKEND_IMAGE }}:latest \
+                       -f Dockerfile.backend .
+          docker push ${{ env.REGISTRY_NAME }}.azurecr.io/${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          docker push ${{ env.REGISTRY_NAME }}.azurecr.io/${{ env.BACKEND_IMAGE }}:latest
+
+      - name: Azure logout
+        if: always()
+        run: az logout
+
+  # ===========================================================================
+  # Build Frontend Container
+  # ===========================================================================
+  build-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
+
+      - name: Login to Azure Container Registry
+        run: |
+          az acr login --name ${{ env.REGISTRY_NAME }}
+
+      - name: Build and push frontend container
+        working-directory: .
+        run: |
+          docker build -t ${{ env.REGISTRY_NAME }}.azurecr.io/${{ env.FRONTEND_IMAGE }}:${{ github.sha }} \
+                       -t ${{ env.REGISTRY_NAME }}.azurecr.io/${{ env.FRONTEND_IMAGE }}:latest \
+                       -f frontend/Dockerfile frontend/
+          docker push ${{ env.REGISTRY_NAME }}.azurecr.io/${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+          docker push ${{ env.REGISTRY_NAME }}.azurecr.io/${{ env.FRONTEND_IMAGE }}:latest
+
+      - name: Azure logout
+        if: always()
+        run: az logout
+
+  # ===========================================================================
+  # Deploy to Staging (Container Apps)
+  # ===========================================================================
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: [build-backend, build-frontend]
+    environment: staging
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
+
+      - name: Deploy infrastructure (Bicep)
+        run: |
+          az deployment group create \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --template-file aspire/infra/main.bicep \
+            --parameters environmentName=staging \
+                         backendImage=${{ env.BACKEND_IMAGE }}:${{ github.sha }} \
+                         frontendImage=${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+
+      - name: Get Container Apps URLs
+        id: get-urls
+        run: |
+          BACKEND_URL=$(az deployment group show \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --name main \
+            --query properties.outputs.backendUrl.value -o tsv)
+          FRONTEND_URL=$(az deployment group show \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --name main \
+            --query properties.outputs.frontendUrl.value -o tsv)
+          echo "backend_url=$BACKEND_URL" >> $GITHUB_OUTPUT
+          echo "frontend_url=$FRONTEND_URL" >> $GITHUB_OUTPUT
+
+      - name: Wait for deployment to stabilize
+        run: sleep 60
+
+      - name: Health check backend
+        run: |
+          BACKEND_URL="${{ steps.get-urls.outputs.backend_url }}"
+          echo "Checking backend health at $BACKEND_URL/health/ready"
+          
+          for i in {1..10}; do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BACKEND_URL/health/ready" || echo "000")
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "Backend health check passed!"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP status $HTTP_STATUS, retrying in 15 seconds..."
+            sleep 15
+          done
+          
+          echo "Backend health check failed after 10 attempts"
+          exit 1
+
+      - name: Health check frontend
+        run: |
+          FRONTEND_URL="${{ steps.get-urls.outputs.frontend_url }}"
+          echo "Checking frontend health at $FRONTEND_URL/api/health"
+          
+          for i in {1..10}; do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$FRONTEND_URL/api/health" || echo "000")
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "Frontend health check passed!"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP status $HTTP_STATUS, retrying in 15 seconds..."
+            sleep 15
+          done
+          
+          echo "Frontend health check failed after 10 attempts"
+          exit 1
+
+      - name: Deployment summary
+        run: |
+          echo "✅ Staging deployment successful!"
+          echo "Backend URL: ${{ steps.get-urls.outputs.backend_url }}"
+          echo "Frontend URL: ${{ steps.get-urls.outputs.frontend_url }}"
+
+      - name: Azure logout
+        if: always()
+        run: az logout
+
+  # ===========================================================================
+  # Deploy to Production (Manual Approval Required)
+  # ===========================================================================
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'production'
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
+
+      - name: Deploy infrastructure (Bicep)
+        run: |
+          az deployment group create \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --template-file aspire/infra/main.bicep \
+            --parameters environmentName=production \
+                         backendImage=${{ env.BACKEND_IMAGE }}:${{ github.sha }} \
+                         frontendImage=${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+
+      - name: Get Container Apps URLs
+        id: get-urls
+        run: |
+          BACKEND_URL=$(az deployment group show \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --name main \
+            --query properties.outputs.backendUrl.value -o tsv)
+          FRONTEND_URL=$(az deployment group show \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --name main \
+            --query properties.outputs.frontendUrl.value -o tsv)
+          echo "backend_url=$BACKEND_URL" >> $GITHUB_OUTPUT
+          echo "frontend_url=$FRONTEND_URL" >> $GITHUB_OUTPUT
+
+      - name: Wait for deployment to stabilize
+        run: sleep 60
+
+      - name: Health check production
+        run: |
+          BACKEND_URL="${{ steps.get-urls.outputs.backend_url }}"
+          FRONTEND_URL="${{ steps.get-urls.outputs.frontend_url }}"
+          
+          # Backend health check
+          for i in {1..10}; do
+            BACKEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BACKEND_URL/health/ready" || echo "000")
+            if [ "$BACKEND_STATUS" = "200" ]; then
+              echo "✅ Backend health check passed!"
+              break
+            fi
+            if [ $i -eq 10 ]; then
+              echo "❌ Backend health check failed after 10 attempts"
+              exit 1
+            fi
+            echo "Attempt $i: Backend HTTP $BACKEND_STATUS, retrying..."
+            sleep 15
+          done
+          
+          # Frontend health check
+          for i in {1..10}; do
+            FRONTEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$FRONTEND_URL/api/health" || echo "000")
+            if [ "$FRONTEND_STATUS" = "200" ]; then
+              echo "✅ Frontend health check passed!"
+              break
+            fi
+            if [ $i -eq 10 ]; then
+              echo "❌ Frontend health check failed after 10 attempts"
+              exit 1
+            fi
+            echo "Attempt $i: Frontend HTTP $FRONTEND_STATUS, retrying..."
+            sleep 15
+          done
+
+      - name: Deployment summary
+        run: |
+          echo "🚀 Production deployment successful!"
+          echo "Backend URL: ${{ steps.get-urls.outputs.backend_url }}"
+          echo "Frontend URL: ${{ steps.get-urls.outputs.frontend_url }}"
+
+      - name: Azure logout
+        if: always()
+        run: az logout

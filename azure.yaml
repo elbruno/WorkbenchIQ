@@ -1,0 +1,15 @@
+name: workbenchiq
+metadata:
+  template: workbenchiq-aspire@0.0.1
+services:
+  backend-api:
+    project: .
+    language: python
+    host: containerapp
+  frontend:
+    project: ./frontend
+    language: js
+    host: containerapp
+infra:
+  provider: bicep
+  path: aspire/infra

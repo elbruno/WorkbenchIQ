@@ -1,3 +1,7 @@
+# ⚠️ DEPRECATED: This workflow is preserved as a rollback option.
+# The primary deployment pipeline is now deploy-aspire.yml using Azure Container Apps.
+# This workflow deploys to Azure App Service and can be used if Container Apps deployment fails.
+
 name: Deploy Frontend App
 
 on:

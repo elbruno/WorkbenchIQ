@@ -1,0 +1,71 @@
+# Node.js and frontend (separate container)
+node_modules/
+.next/
+frontend/
+
+# Runtime data
+data/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment and secrets
+.env
+.env.*
+.env.local
+.env.development
+.env.production
+*.key
+*.pem
+
+# Git
+.git/
+.github/
+.gitignore
+.gitattributes
+
+# Orchestration (not in container)
+aspire/
+
+# Testing and documentation
+tests/
+specs/
+docs/
+*.md
+README.*
+LICENSE
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# CI/CD
+.azure/
+.github/
+azure-pipelines.yml
+.gitlab-ci.yml
+
+# Scripts (not needed in production)
+scripts/
+*.sh
+
+# Development tools
+.pytest_cache/
+.coverage
+.mypy_cache/
+.ruff_cache/
+htmlcov/
